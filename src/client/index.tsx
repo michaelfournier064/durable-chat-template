@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
-import React, { useState, useMemo, useEffect } from "react";
+import { usePartySocket } from "partysocket/react";
+import React, { useState } from "react";
 import {
   BrowserRouter,
   Routes,
@@ -16,48 +17,43 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const { room } = useParams();
 
-  // Replace with your actual JWT token
-  const JWT_TOKEN = "YOUR_JWT_TOKEN";
-
-  const socket = useMemo(() => {
-    return new WebSocket(`ws://localhost:2413/ws/chat?token=${JWT_TOKEN}`);
-  }, [room]);
-
-  useEffect(() => {
-    socket.onopen = () => {
-      // Optionally notify connection established
-    };
-    socket.onmessage = (evt) => {
-      const message = JSON.parse(evt.data);
+  const socket = usePartySocket({
+    party: "chat",
+    room,
+    onMessage: (evt) => {
+      const message = JSON.parse(evt.data as string) as Message;
       if (message.type === "add") {
-        setMessages((prev) => {
-          const foundIndex = prev.findIndex((m) => m.id === message.id);
-          if (foundIndex === -1) {
-            return [
-              ...prev,
-              {
+        const foundIndex = messages.findIndex((m) => m.id === message.id);
+        if (foundIndex === -1) {
+          // probably someone else who added a message
+          setMessages((messages) => [
+            ...messages,
+            {
+              id: message.id,
+              content: message.content,
+              user: message.user,
+              role: message.role,
+            },
+          ]);
+        } else {
+          // this usually means we ourselves added a message
+          // and it was broadcasted back
+          // so let's replace the message with the new message
+          setMessages((messages) => {
+            return messages
+              .slice(0, foundIndex)
+              .concat({
                 id: message.id,
                 content: message.content,
                 user: message.user,
                 role: message.role,
-              },
-            ];
-          } else {
-            return [
-              ...prev.slice(0, foundIndex),
-              {
-                id: message.id,
-                content: message.content,
-                user: message.user,
-                role: message.role,
-              },
-              ...prev.slice(foundIndex + 1),
-            ];
-          }
-        });
+              })
+              .concat(messages.slice(foundIndex + 1));
+          });
+        }
       } else if (message.type === "update") {
-        setMessages((prev) =>
-          prev.map((m) =>
+        setMessages((messages) =>
+          messages.map((m) =>
             m.id === message.id
               ? {
                   id: message.id,
@@ -68,20 +64,11 @@ function App() {
               : m,
           ),
         );
-      } else if (message.type === "all") {
+      } else {
         setMessages(message.messages);
       }
-    };
-    socket.onerror = (err) => {
-      // Optionally handle errors
-    };
-    socket.onclose = () => {
-      // Optionally handle close
-    };
-    return () => {
-      socket.close();
-    };
-  }, [socket]);
+    },
+  });
 
   return (
     <div className="chat container">
@@ -105,12 +92,15 @@ function App() {
             role: "user",
           };
           setMessages((messages) => [...messages, chatMessage]);
+          // we could broadcast the message here
+
           socket.send(
             JSON.stringify({
               type: "add",
               ...chatMessage,
-            } as Message),
+            } satisfies Message),
           );
+
           content.value = "";
         }}
       >
